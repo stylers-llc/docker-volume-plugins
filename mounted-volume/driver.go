@@ -31,7 +31,7 @@ type DriverCallback interface {
 	MountOptions(req *volume.CreateRequest) []string
 
 	// PreMount is called before the mount occurs.  This can be used to deal with scenarios where the credential data need to be unlocked.
-	PreMount(req *volume.MountRequest) error
+	PreMount(req *volume.MountRequest, args []string) error
 
 	// PostMount is deferred after PreMount occurs.
 	PostMount(req *volume.MountRequest)
@@ -42,7 +42,7 @@ type DriverCallback interface {
 // Driver extends the volume.Driver by implementing template versions
 // of the methods.
 type Driver struct {
-	mountExecutable        string
+	MountExecutable        string
 	mountPointAfterOptions bool
 	dockerSocketName       string
 	volumedb               *bolt.DB
@@ -215,15 +215,12 @@ func (p *Driver) Mount(req *volume.MountRequest) (*volume.MountResponse, error) 
 		return &volume.MountResponse{}, getVolErr
 	}
 
+	log.Println(volumeInfo)
+
 	mountPoint := path.Join(volume.DefaultDockerRootDirectory, req.ID)
 	if err := os.MkdirAll(mountPoint, 0755); err != nil {
 		return &volume.MountResponse{}, fmt.Errorf("error mounting %s: %s", req.Name, err.Error())
 	}
-
-	if err := p.PreMount(req); err != nil {
-		return &volume.MountResponse{}, fmt.Errorf("error mounting %s on premount: %s", req.Name, err.Error())
-	}
-	defer p.PostMount(req)
 
 	var args []string
 	if p.mountPointAfterOptions {
@@ -233,11 +230,19 @@ func (p *Driver) Mount(req *volume.MountRequest) (*volume.MountResponse, error) 
 		args = append(args, volumeInfo.Args...)
 	}
 	log.Println(args)
-	cmd := exec.Command(p.mountExecutable, args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+
+	if err := p.PreMount(req, args); err != nil {
+		return &volume.MountResponse{}, fmt.Errorf("error mounting %s on premount: %s", req.Name, err.Error())
+	}
+	defer p.PostMount(req)
+
+	cmd := exec.Command(p.MountExecutable, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		fmt.Printf("Command output: %s\n", out)
 		return &volume.MountResponse{}, fmt.Errorf("error mounting %s: %s", req.Name, err.Error())
 	}
+	fmt.Printf("Command output: %s\n", out)
 	volumeInfo.MountPoint = mountPoint
 	volumeInfo.Status["mounted"] = true
 	p.storeVolumeInfo(tx, req.Name, volumeInfo)
@@ -331,7 +336,7 @@ func NewDriver(mountExecutable string, mountPointAfterOptions bool, dockerSocket
 	})
 
 	d := &Driver{
-		mountExecutable:        mountExecutable,
+		MountExecutable:        mountExecutable,
 		mountPointAfterOptions: mountPointAfterOptions,
 		dockerSocketName:       dockerSocketName,
 		volumedb:               db,

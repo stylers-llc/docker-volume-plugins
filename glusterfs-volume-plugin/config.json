@@ -11,6 +11,13 @@
                 "value"
             ],
             "value": ""
+        },
+        {
+            "name": "GFS-VOLUME",
+            "settable": [
+                "value"
+            ],
+            "value": ""
         }
     ],
     "network": {
